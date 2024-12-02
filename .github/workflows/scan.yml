@@ -1,0 +1,79 @@
+name: PR URL & Email Detection
+
+on:
+  push [main]
+
+jobs:
+  check-pr-content:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout PR code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+
+    - name: Detect URLs and Email IDs
+      run: |
+        # Define regex for URLs and Email IDs
+        url_pattern="https?://[a-zA-Z0-9./?=_-]*"
+        email_pattern="[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
+        
+        # Fetch all files in the PR
+        files=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})
+
+        urls_found=""
+        emails_found=""
+
+        # Loop through files and check for patterns
+        for file in $files; do
+          if [[ -f "$file" ]]; then
+            echo "Checking file: $file"
+            content=$(cat "$file")
+
+            # Check for URLs
+            urls=$(echo "$content" | grep -oP "$url_pattern")
+            if [[ ! -z "$urls" ]]; then
+              urls_found+="$file: \n$urls\n\n"
+            fi
+
+            # Check for email addresses
+            emails=$(echo "$content" | grep -oP "$email_pattern")
+            if [[ ! -z "$emails" ]]; then
+              emails_found+="$file: \n$emails\n\n"
+            fi
+          fi
+        done
+
+        # Output the findings
+        echo "Detected URLs: $urls_found"
+        echo "Detected Emails: $emails_found"
+        
+        # Fail the job if URLs or emails are found
+        if [[ ! -z "$urls_found" || ! -z "$emails_found" ]]; then
+          echo "Error: URLs or Email IDs detected!"
+          exit 1
+        fi
+
+    - name: Create PR comment with results
+      if: always()
+      run: |
+        # Add the results as a comment to the PR
+        if [[ ! -z "$urls_found" || ! -z "$emails_found" ]]; then
+          pr_comment="**Detected URLs and Emails in PR:**
+
+          $urls_found
+          $emails_found"
+          
+          curl -X POST \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -d "{\"body\": \"$pr_comment\"}" \
+            https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments
+        fi
